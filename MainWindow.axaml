@@ -13,7 +13,7 @@
                         />
                 <Border BorderBrush= "Gray" BorderThickness= "1" Margin= "5">
                         <Canvas x:Name= "DrawingCanvas"
-                                Background= "LightGray"
+                                Background= "#FF414449"
                                 ClipToBounds= "True"
                                 />
                 </Border>

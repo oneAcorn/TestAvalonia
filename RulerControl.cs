@@ -4,6 +4,8 @@ using Avalonia.Input;
 using Avalonia.Media;
 using System;
 using System.Diagnostics;
+using Avalonia.VisualTree;
+using Avalonia.Media.TextFormatting;
 
 namespace TestAvalonia;
 
@@ -37,15 +39,26 @@ public class RulerControl : Control
         set => SetValue(AngleProperty, value);
     }
 
+    // 常量定义
     private const double RulerHeight = 50;
     private const double HandleRadius = 8;
 
+    // 旋转手柄相关
     private bool _isDraggingHandle;
-    private double _handleLocalAngle; // 弧度
+    private double _handleStartAngleRad; // 按下手柄时鼠标相对旋转中心的角度（弧度）
+    private double _startAngle; // 按下手柄时的初始角度
+
+    // 整体拖拽相关
+    private bool _isDragging;
+    private Point _dragStartCanvasPos; // 拖拽开始时鼠标在画布的坐标
+    private double _dragStartLeft;     // 拖拽开始时的Left
+    private double _dragStartTop;      // 拖拽开始时的Top
+
+    private const double TextFontSize = 10;
+    private readonly Typeface _textTypeface = new Typeface("Arial");
 
     static RulerControl()
     {
-        Console.WriteLine("ruler init");
         AngleProperty.Changed.AddClassHandler<RulerControl>((control, e) => control.OnAngleChanged());
         DpiProperty.Changed.AddClassHandler<RulerControl>((control, e) =>
         {
@@ -61,6 +74,7 @@ public class RulerControl : Control
 
     public RulerControl()
     {
+        // 旋转中心：左边缘中点
         RenderTransformOrigin = new RelativePoint(0, 0.5, RelativeUnit.Relative);
         RenderTransform = new RotateTransform(Angle);
     }
@@ -71,12 +85,12 @@ public class RulerControl : Control
             rotateTransform.Angle = Angle;
         else
             RenderTransform = new RotateTransform(Angle);
+        InvalidateVisual();
     }
 
     protected override Size MeasureOverride(Size availableSize)
     {
-        double pixelLength = (LengthInCm / 2.54) * Dpi; // 厘米 → 英寸 → 像素
-        Console.WriteLine($"cm:{LengthInCm},dpi:{Dpi},pxLen:{pixelLength}");
+        double pixelLength = (LengthInCm / 2.54) * Dpi; // 厘米→英寸→像素
         return new Size(pixelLength, RulerHeight);
     }
 
@@ -84,7 +98,6 @@ public class RulerControl : Control
     {
         double width = Bounds.Width;
         double height = Bounds.Height;
-        // Console.WriteLine($"Ruler Render size:({width},{height})");
 
         // 背景
         context.FillRectangle(Brushes.LightGray, new Rect(0, 0, width, height));
@@ -96,58 +109,118 @@ public class RulerControl : Control
         for (int mm = 0; mm <= totalMM; mm++)
         {
             double x = mm * mmToPixels;
-            double tickHeight;
-            if (mm % 10 == 0)
-                tickHeight = height * 0.6; // 大刻度
-            else if (mm % 5 == 0)
-                tickHeight = height * 0.4; // 中刻度
-            else
-                tickHeight = height * 0.2; // 小刻度
-
+            double tickHeight = mm % 10 == 0 ? height * 0.6 : (mm % 5 == 0 ? height * 0.4 : height * 0.2);
             context.DrawLine(new Pen(Brushes.Black, 1), new Point(x, 0), new Point(x, tickHeight));
         }
 
-        // 绘制旋转手柄（红色圆）
+        // 绘制旋转手柄
         Point handleCenter = new Point(width - HandleRadius, HandleRadius);
         context.DrawEllipse(Brushes.Red, null, handleCenter, HandleRadius, HandleRadius);
     }
 
+    // // 绘制垂直于屏幕的厘米数字（核心逻辑：抵消尺子旋转，让文本保持水平）
+    // private void DrawCentimeterNumber(DrawingContext context, double x, double tickHeight, double cmValue)
+    // {
+    //     // 1. 转换刻度本地坐标为屏幕全局坐标（抵消尺子旋转的关键）
+    //     var localPoint = new Point(x, tickHeight + 2); // 数字在大刻度下方2像素
+    //     var globalPoint = PointToScreen(localPoint);   // 转屏幕坐标
+    //     var renderPoint = ScreenToClient(globalPoint); // 转回控件绘制坐标（已抵消旋转）
+
+    //     // 2. 生成数字文本（仅显示非0的厘米数，0刻度可省略）
+    //     string text = cmValue == 0 ? "" : $"{cmValue:F0}cm";
+
+    //     // 3. 绘制文本（保持垂直于屏幕，无旋转）
+    //     var textLayout = new TextLayout(text:text, _textTypeface,TextFontSize,Brushes.Black);
+    //     context.DrawText(
+    //         brush: Brushes.Black,
+    //         origin: new Point(renderPoint.X - textLayout.Width / 2, renderPoint.Y), // 文本居中
+    //         textLayout: textLayout
+    //     );
+    // }
+
+    // // 【最终修正：适配所有Avalonia版本的HitTestCore】
+    // // 1. 正确签名：返回Visual，参数是PointHitTestParameters（来自Avalonia.Input）
+    // // 2. Control继承自Visual，所以能重写这个方法
+    // protected override Visual? HitTestCore(PointHitTestParameters hitTestParameters)
+    // {
+    //     // 强制整个Bounds区域可点击（即使无背景）
+    //     if (Bounds.Contains(hitTestParameters.HitPoint))
+    //     {
+    //         return this;
+    //     }
+    //     // 调用Visual基类的HitTestCore（Control的父类）
+    //     return base.HitTestCore(hitTestParameters);
+    // }
+
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+
+        Point localPoint = e.GetPosition(this);
+        double width = Bounds.Width;
+        double height = Bounds.Height;
+        Point handleCenter = new Point(width - HandleRadius, HandleRadius);
+
+        // 点击旋转手柄
+        if (Vector.Distance(localPoint, handleCenter) <= HandleRadius)
         {
-            Point p = e.GetPosition(this);
-            double width = Bounds.Width;
-            double height = Bounds.Height;
-            Point handleCenter = new Point(width - HandleRadius, HandleRadius);
-            // 修正2：使用 Vector.Distance 计算两点距离
-            double dist = Vector.Distance(p, handleCenter);
-            if (dist <= HandleRadius)
-            {
-                _isDraggingHandle = true;
-                double dx = handleCenter.X - 0;
-                double dy = handleCenter.Y - height / 2;
-                _handleLocalAngle = Math.Atan2(dy, dx);
-                e.Pointer.Capture(this);
-                e.Handled = true;
-            }
+            _isDraggingHandle = true;
+            _startAngle = Angle;
+            Point rotateCenter = new Point(0, height / 2); // 旋转中心（左边缘中点）
+            double dx = localPoint.X - rotateCenter.X;
+            double dy = localPoint.Y - rotateCenter.Y;
+            _handleStartAngleRad = Math.Atan2(dy, dx); // 鼠标相对旋转中心的初始角度
+            e.Pointer.Capture(this);
+            e.Handled = true;
+        }
+        // 点击尺子本体（拖拽）
+        else if (Parent is Canvas canvas)
+        {
+            _isDragging = true;
+            _dragStartCanvasPos = e.GetPosition(canvas); // 记录画布坐标
+            _dragStartLeft = Canvas.GetLeft(this);       // 记录初始Left
+            _dragStartTop = Canvas.GetTop(this);         // 记录初始Top
+            e.Pointer.Capture(this);
+            e.Handled = true;
         }
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
+
+        // 处理旋转
         if (_isDraggingHandle)
         {
-            Point p = e.GetPosition(this);
             double height = Bounds.Height;
-            double dx = p.X - 0;
-            double dy = p.Y - height / 2;
-            double mouseAngle = Math.Atan2(dy, dx);
-            double newAngleRad = mouseAngle - _handleLocalAngle;
-            double newAngleDeg = newAngleRad * 180 / Math.PI;
-            Angle = newAngleDeg;
+            Point localPoint = e.GetPosition(this);
+            Point rotateCenter = new Point(0, height / 2);
+
+            // 计算当前鼠标相对旋转中心的角度
+            double dx = localPoint.X - rotateCenter.X;
+            double dy = localPoint.Y - rotateCenter.Y;
+            double currentAngleRad = Math.Atan2(dy, dx);
+
+            // 角度差 = 当前角度 - 初始角度，转换为角度值
+            double angleDelta = (currentAngleRad - _handleStartAngleRad) * 180 / Math.PI;
+            Angle = _startAngle + angleDelta; // 直接叠加差值，无累积错误
+            e.Handled = true;
+        }
+        // 处理拖拽
+        else if (_isDragging && Parent is Canvas canvas)
+        {
+            Point currentCanvasPos = e.GetPosition(canvas);
+            // 计算画布坐标偏移量
+            double deltaX = currentCanvasPos.X - _dragStartCanvasPos.X;
+            double deltaY = currentCanvasPos.Y - _dragStartCanvasPos.Y;
+
+            // 新位置 = 初始位置 + 偏移量（边界限制）
+            double newLeft = Math.Max(0, Math.Min(_dragStartLeft + deltaX, canvas.Bounds.Width - Bounds.Width));
+            double newTop = Math.Max(0, Math.Min(_dragStartTop + deltaY, canvas.Bounds.Height - Bounds.Height));
+
+            Canvas.SetLeft(this, newLeft);
+            Canvas.SetTop(this, newTop);
             e.Handled = true;
         }
     }
@@ -158,6 +231,12 @@ public class RulerControl : Control
         if (_isDraggingHandle)
         {
             _isDraggingHandle = false;
+            e.Pointer.Capture(null);
+            e.Handled = true;
+        }
+        else if (_isDragging)
+        {
+            _isDragging = false;
             e.Pointer.Capture(null);
             e.Handled = true;
         }
