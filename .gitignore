@@ -1,0 +1,67 @@
+# .gitignore for Avalonia projects
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+arm/
+arm64/
+bld/
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+
+# VS Code
+/.vscode/
+
+# ReSharper
+*_Resharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# NuGet
+packages/
+*.nupkg
+*.nuspec
+*.snk
+
+# MSBuild
+*.msbuild.log
+*.binlog
+
+# macOS
+.DS_Store
+
+# Linux
+*.swp
+*~
+
+# User-specific files
+*.dbmdl
+*.dbproj.local
+*.jfm
+*.pfx
+*.publishsettings
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Avalonia-specific (optional, but safe to ignore)
+*.axaml.g.cs
+*.xaml.g.cs
+/GeneratedFiles/
