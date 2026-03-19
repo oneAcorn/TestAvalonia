@@ -47,8 +47,11 @@ public class RulerControl : Control
         set => SetValue(MeasurePositionProperty, value);
     }
 
+    public double ArrowHeadLength { get; set; } = 10;
+    public double ArrowHeadWidth { get; set; } = 6;
+
     // Constants
-    private const double RulerHeight = 50;
+    private const double RulerHeight = 100;
     private const double HandleRadius = 8;
     // The measure line extends RulerHeight/2 above and below the ruler body,
     // giving a total visible length of RulerHeight (body) + RulerHeight/2 + RulerHeight/2 = 2 * RulerHeight.
@@ -71,8 +74,11 @@ public class RulerControl : Control
     private bool _isDraggingMeasureLine;
     private double _measureLineDragStartLocalX;
     private double _measureLineStartX;
+    private double _measureTextPadding = 5;
 
     private double _mm2Pixcel;
+
+    private SolidColorBrush _scaleBrush = new SolidColorBrush(Color.Parse("#FFBEBFCA"));
 
     static RulerControl()
     {
@@ -109,6 +115,7 @@ public class RulerControl : Control
             rt.Angle = Angle;
         else
             RenderTransform = new RotateTransform(Angle);
+        // Console.WriteLine($"curAngle:{Angle} transform:{RenderTransform}");
         InvalidateVisual();
     }
 
@@ -139,22 +146,22 @@ public class RulerControl : Control
             double tickH;
             if (mm % 10 == 0)
             {
-                tickH = height * 0.6;
+                tickH = height * 0.26;
                 DrawCMNumber(context, x, tickH, mm / 10.0);
             }
             else if (mm % 5 == 0)
-                tickH = height * 0.4;
+                tickH = height * 0.18;
             else
-                tickH = height * 0.2;
+                tickH = height * 0.12;
 
-            context.DrawLine(new Pen(Brushes.Black, 1), new Point(x, 0), new Point(x, tickH));
+            context.DrawLine(new Pen(_scaleBrush, 1), new Point(x, 0), new Point(x, tickH));
         }
 
         // Measure line (drawn before handle so handle renders on top)
         DrawMeasureLine(context, width, height);
 
         // Rotation handle (red circle, top-right corner)
-        Point handleCenter = new Point(width - HandleRadius, HandleRadius);
+        Point handleCenter = new Point(width - HandleRadius, HandleRadius + height / 2.0);
         context.DrawEllipse(Brushes.Red, null, handleCenter, HandleRadius, HandleRadius);
     }
 
@@ -163,6 +170,42 @@ public class RulerControl : Control
         var measureLineX = MeasurePosition * 10 * _mm2Pixcel;
         double lineX = Math.Clamp(measureLineX, 0, width);
         context.FillRectangle(new SolidColorBrush(Color.Parse("#1A22C55E")), new Rect(0, 0, lineX, height));
+    }
+
+    private void DrawArrow(DrawingContext context, Point start, Point end, IBrush fill, Pen pen)
+    {
+        Vector direction = end - start;
+        double length = direction.Length;
+        if (length < double.Epsilon) return; // 忽略零长度向量
+
+        // 手动计算归一化方向向量
+        Vector normalized = direction / length;
+
+        // 计算垂直向量（用于箭头两侧）
+        Vector perpendicular = new Vector(-normalized.Y, normalized.X);
+
+        Point arrowTip = end;
+
+        // 三角形底边中点（在箭头尖端后方）
+        Point baseMid = end - normalized * ArrowHeadLength;
+
+        // 三角形底边两个端点
+        Point baseLeft = baseMid + perpendicular * (ArrowHeadWidth / 2);
+        Point baseRight = baseMid - perpendicular * (ArrowHeadWidth / 2);
+
+        // 绘制直线（只画到三角形底边中点，避免箭头覆盖直线）
+        context.DrawLine(pen, start, baseMid);
+
+        // 构建并绘制箭头三角形
+        var arrowHead = new StreamGeometry();
+        using (var ctx = arrowHead.Open())
+        {
+            ctx.BeginFigure(arrowTip, true); // 起点为箭头尖端，并填充
+            ctx.LineTo(baseLeft);
+            ctx.LineTo(baseRight);
+            ctx.EndFigure(true); // 闭合图形
+        }
+        context.DrawGeometry(fill, null, arrowHead);
     }
 
     /// <summary>
@@ -182,21 +225,37 @@ public class RulerControl : Control
 
         var dashedPen = new Pen(Brushes.Green, 2,
             new DashStyle(new double[] { 6, 4 }, 0));
+        //起始线
+        context.DrawLine(dashedPen, new Point(0.0, lineTop), new Point(0.0, lineBottom));
+        //测量线
         context.DrawLine(dashedPen, new Point(lineX, lineTop), new Point(lineX, lineBottom));
 
         // Cm label — positioned just above the top of the measure line
-        double cmValue = lineX / width * LengthInCm;
-        string label = $"{cmValue:F1} cm";
+        var arrowBrush = new SolidColorBrush(Color.Parse("#22C55E"));
+        var arrowThickness = 2;
+        string label = $"{MeasurePosition:F1} cm";
         var ft = new FormattedText(label, CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, Typeface.Default, 11, Brushes.Green);
 
-        double labelX = lineX - ft.Width / 2;   // horizontally centred on the line
-        double labelY = lineTop - ft.Height - 3; // a few pixels above the line top
+        double labelX = lineX / 2.0 - ft.Width / 2.0;   // horizontally centred on the line
+        double labelY = height - ft.Height / 2.0; // a few pixels above the line top
 
         // Keep the label upright regardless of the ruler's rotation angle.
         // Rotate around the label's visual centre.
-        DrawUpright(context, lineX, labelY + ft.Height / 2,
+        DrawByHV(context, lineX / 2.0, labelY + ft.Height / 2,
             () => context.DrawText(ft, new Point(labelX, labelY)));
+        // context.DrawText(ft, new Point(labelX, labelY));
+
+        DrawArrow(context,
+            new Point(labelX - _measureTextPadding, height),
+            new Point(0.0, height), arrowBrush,
+            new Pen(arrowBrush, arrowThickness)
+            );
+        DrawArrow(context,
+            new Point(labelX + ft.Width + _measureTextPadding, height),
+            new Point(lineX, height), arrowBrush,
+            new Pen(arrowBrush, arrowThickness)
+            );
     }
 
     /// <summary>
@@ -213,13 +272,13 @@ public class RulerControl : Control
             CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight,
             Typeface.Default,
-            20,
-            new SolidColorBrush(Colors.Black));
+            12,
+            _scaleBrush);
 
         double xPos = x - ft.Width / 2;
 
         // Keep the text upright — rotate around the text's visual centre.
-        DrawUpright(context, x, tickHeight + ft.Height / 2,
+        DrawByHV(context, x, tickHeight + ft.Height / 2,
             () => context.DrawText(ft, new Point(xPos, tickHeight)));
     }
 
@@ -230,7 +289,45 @@ public class RulerControl : Control
     /// </summary>
     private void DrawUpright(DrawingContext context, double cx, double cy, Action draw)
     {
-        double rad = -Angle * Math.PI / 180.0;
+        DrawByAngle(context, -Angle, cx, cy, draw);
+    }
+
+    /// <summary>
+    /// 根据当前角度决定是水平还是垂直绘制
+    /// </summary>
+    /// <param name="context"></param>
+    /// <param name="cx"></param>
+    /// <param name="cy"></param>
+    /// <param name="draw"></param>
+    /// <returns>true:水平绘制; false:垂直绘制</returns>
+    private bool DrawByHV(DrawingContext context, double cx, double cy, Action draw)
+    {
+        var absAngle = Math.Abs(Angle);
+        var isHorizontal = false;
+        if (Angle >= -135 && Angle < -45)
+        {
+            DrawByAngle(context, 90, cx, cy, draw);
+        }
+        else if (Angle >= -45 && Angle < 45)
+        {
+            isHorizontal = true;
+            DrawByAngle(context, 0, cx, cy, draw);
+        }
+        else if (Angle >= 45 && Angle < 135)
+        {
+            DrawByAngle(context, -90, cx, cy, draw);
+        }
+        else
+        {
+            isHorizontal = true;
+            DrawByAngle(context, 180, cx, cy, draw);
+        }
+        return isHorizontal;
+    }
+
+    private void DrawByAngle(DrawingContext context, double angle, double cx, double cy, Action draw)
+    {
+        double rad = angle * Math.PI / 180.0;
 
         // Matrix that rotates by `rad` around the point (cx, cy):
         //   translate so (cx,cy) → origin, rotate, translate back.
@@ -254,7 +351,7 @@ public class RulerControl : Control
         Point local = e.GetPosition(this);
         double width = Bounds.Width;
         double height = Bounds.Height;
-        Point handleCenter = new Point(width - HandleRadius, HandleRadius);
+        Point handleCenter = new Point(width - HandleRadius, HandleRadius + height / 2.0);
 
         var measureLineX = MeasurePosition * 10 * _mm2Pixcel;
 

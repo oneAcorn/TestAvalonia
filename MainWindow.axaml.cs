@@ -17,14 +17,14 @@ public partial class MainWindow : Window
         var ruler = new RulerControl
         {
             Dpi = 91.79,
-            LengthInCm = 10,
+            LengthInCm = 10.8,
             Angle = 90,
             MeasurePosition = 4.8
         };
 
-        // 初始位置（画布中央）
+        // 初始位置
         double left = (DrawingCanvas.Bounds.Width - ruler.Bounds.Width) / 2;
-        double top = (DrawingCanvas.Bounds.Height - ruler.Bounds.Height) / 2;
+        double top = (DrawingCanvas.Bounds.Height - ruler.Bounds.Height) * 0.2;
         Canvas.SetLeft(ruler, left);
         Canvas.SetTop(ruler, top);
 
