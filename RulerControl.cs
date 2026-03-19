@@ -9,7 +9,7 @@ namespace TestAvalonia;
 
 public class RulerControl : Control
 {
-    // 依赖属性
+    // Styled properties
     public static readonly StyledProperty<double> DpiProperty =
         AvaloniaProperty.Register<RulerControl, double>(nameof(Dpi), 96.0);
 
@@ -37,50 +37,59 @@ public class RulerControl : Control
         set => SetValue(AngleProperty, value);
     }
 
-    // 常量定义
+    // Constants
     private const double RulerHeight = 50;
     private const double HandleRadius = 8;
+    // The measure line extends RulerHeight/2 above and below the ruler body,
+    // giving a total visible length of RulerHeight (body) + RulerHeight/2 + RulerHeight/2 = 2 * RulerHeight.
+    private const double MeasureLineExtend = RulerHeight / 2;
+    private const double MeasureLineHitThreshold = 6.0;
 
-    // 旋转手柄相关
+    // Rotation handle state
     private bool _isDraggingHandle;
-    private double _handleStartAngleRad; // 按下手柄时鼠标相对旋转中心的角度（弧度）
-    private double _startAngle; // 按下手柄时的初始角度
+    private double _handleStartAngleRad;
+    private double _startAngle;
 
-    // 整体拖拽相关
+    // Body drag state
     private bool _isDragging;
-    private Point _dragStartCanvasPos; // 拖拽开始时鼠标在画布的坐标
-    private double _dragStartLeft;     // 拖拽开始时的Left
-    private double _dragStartTop;      // 拖拽开始时的Top
+    private Point _dragStartCanvasPos;
+    private double _dragStartLeft;
+    private double _dragStartTop;
 
-    private const double TextFontSize = 10;
-    private readonly Typeface _textTypeface = new Typeface("Arial");
+    // Measure line state
+    private double _measureLineX;           // current X position in local ruler coordinates
+    private bool _isDraggingMeasureLine;
+    private double _measureLineDragStartLocalX;
+    private double _measureLineStartX;
 
     static RulerControl()
     {
-        AngleProperty.Changed.AddClassHandler<RulerControl>((control, e) => control.OnAngleChanged());
-        DpiProperty.Changed.AddClassHandler<RulerControl>((control, e) =>
+        AngleProperty.Changed.AddClassHandler<RulerControl>((c, _) => c.OnAngleChanged());
+        DpiProperty.Changed.AddClassHandler<RulerControl>((c, _) =>
         {
-            control.InvalidateMeasure();
-            control.InvalidateVisual();
+            c.InvalidateMeasure();
+            c.InvalidateVisual();
         });
-        LengthInCmProperty.Changed.AddClassHandler<RulerControl>((control, e) =>
+        LengthInCmProperty.Changed.AddClassHandler<RulerControl>((c, _) =>
         {
-            control.InvalidateMeasure();
-            control.InvalidateVisual();
+            c.InvalidateMeasure();
+            c.InvalidateVisual();
         });
     }
 
     public RulerControl()
     {
-        // 旋转中心：左边缘中点
+        // Rotation origin: left-edge midpoint
         RenderTransformOrigin = new RelativePoint(0, 0.5, RelativeUnit.Relative);
         RenderTransform = new RotateTransform(Angle);
+        // Allow the measure line and its label to render outside the control's layout bounds
+        ClipToBounds = false;
     }
 
     private void OnAngleChanged()
     {
-        if (RenderTransform is RotateTransform rotateTransform)
-            rotateTransform.Angle = Angle;
+        if (RenderTransform is RotateTransform rt)
+            rt.Angle = Angle;
         else
             RenderTransform = new RotateTransform(Angle);
         InvalidateVisual();
@@ -88,7 +97,7 @@ public class RulerControl : Control
 
     protected override Size MeasureOverride(Size availableSize)
     {
-        double pixelLength = (LengthInCm / 2.54) * Dpi; // 厘米→英寸→像素
+        double pixelLength = (LengthInCm / 2.54) * Dpi; // cm → inch → pixels
         return new Size(pixelLength, RulerHeight);
     }
 
@@ -97,74 +106,152 @@ public class RulerControl : Control
         double width = Bounds.Width;
         double height = Bounds.Height;
 
-        // 背景
+        // Background and border
         context.FillRectangle(Brushes.LightGray, new Rect(0, 0, width, height));
         context.DrawRectangle(new Pen(Brushes.Black, 1), new Rect(0, 0, width, height));
 
-        // 绘制刻度
-        double mmToPixels = width / (LengthInCm * 10); // 每毫米像素数
+        // Tick marks and cm labels
+        double mmToPixels = width / (LengthInCm * 10);
         int totalMM = (int)(LengthInCm * 10);
         for (int mm = 0; mm <= totalMM; mm++)
         {
             double x = mm * mmToPixels;
-            double tickHeight;
+            double tickH;
             if (mm % 10 == 0)
             {
-                tickHeight = height * 0.6;
-                DrawCMNumber(context, x, tickHeight, mm / 10.0);
+                tickH = height * 0.6;
+                DrawCMNumber(context, x, tickH, mm / 10.0);
             }
             else if (mm % 5 == 0)
-            {
-                tickHeight = height * 0.4;
-            }
+                tickH = height * 0.4;
             else
-            {
-                tickHeight = height * 0.2;
-            }
-            context.DrawLine(new Pen(Brushes.Black, 1), new Point(x, 0), new Point(x, tickHeight));
+                tickH = height * 0.2;
+
+            context.DrawLine(new Pen(Brushes.Black, 1), new Point(x, 0), new Point(x, tickH));
         }
 
-        // 绘制旋转手柄
+        // Measure line (drawn before handle so handle renders on top)
+        DrawMeasureLine(context, width, height);
+
+        // Rotation handle (red circle, top-right corner)
         Point handleCenter = new Point(width - HandleRadius, HandleRadius);
         context.DrawEllipse(Brushes.Red, null, handleCenter, HandleRadius, HandleRadius);
     }
 
+    /// <summary>
+    /// Draws the green dashed measure line and its upright cm label.
+    /// The line is perpendicular to the ruler (vertical in local space) with a total height
+    /// of 2 × RulerHeight: it extends MeasureLineExtend above and below the ruler body.
+    /// </summary>
+    private void DrawMeasureLine(DrawingContext context, double width, double height)
+    {
+        if (width <= 0) return;
+
+        double lineX = Math.Clamp(_measureLineX, 0, width);
+        double lineTop    = -MeasureLineExtend;          // above the ruler
+        double lineBottom = height + MeasureLineExtend;  // below the ruler
+        // total = height + 2 * MeasureLineExtend = RulerHeight + RulerHeight = 2 * RulerHeight ✓
+
+        var dashedPen = new Pen(Brushes.Green, 2,
+            new DashStyle(new double[] { 6, 4 }, 0));
+        context.DrawLine(dashedPen, new Point(lineX, lineTop), new Point(lineX, lineBottom));
+
+        // Cm label — positioned just above the top of the measure line
+        double cmValue = lineX / width * LengthInCm;
+        string label    = $"{cmValue:F1} cm";
+        var ft = new FormattedText(label, CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 11, Brushes.Green);
+
+        double labelX = lineX - ft.Width / 2;   // horizontally centred on the line
+        double labelY = lineTop - ft.Height - 3; // a few pixels above the line top
+
+        // Keep the label upright regardless of the ruler's rotation angle.
+        // Rotate around the label's visual centre.
+        DrawUpright(context, lineX, labelY + ft.Height / 2,
+            () => context.DrawText(ft, new Point(labelX, labelY)));
+    }
+
+    /// <summary>
+    /// Draws a cm number at (x, tickHeight) that stays upright regardless of the ruler angle.
+    /// </summary>
     private void DrawCMNumber(DrawingContext context, double x, double tickHeight, double cmValue)
     {
-        var formattedText = new FormattedText(cmValue.ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 20, new SolidColorBrush(Colors.Black));
-        var xPos = x - formattedText.Width / 2;
-        context.DrawText(formattedText, new Point(xPos, tickHeight));
+        var ft = new FormattedText(
+            cmValue.ToString(CultureInfo.InvariantCulture),
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            Typeface.Default,
+            20,
+            new SolidColorBrush(Colors.Black));
+
+        double xPos = x - ft.Width / 2;
+
+        // Keep the text upright — rotate around the text's visual centre.
+        DrawUpright(context, x, tickHeight + ft.Height / 2,
+            () => context.DrawText(ft, new Point(xPos, tickHeight)));
     }
+
+    /// <summary>
+    /// Applies a counter-rotation of -Angle around (cx, cy) before calling <paramref name="draw"/>.
+    /// Because the control itself is rotated by +Angle, the net rotation of the drawn content
+    /// is zero, making it appear upright in screen space.
+    /// </summary>
+    private void DrawUpright(DrawingContext context, double cx, double cy, Action draw)
+    {
+        double rad = -Angle * Math.PI / 180.0;
+
+        // Matrix that rotates by `rad` around the point (cx, cy):
+        //   translate so (cx,cy) → origin, rotate, translate back.
+        // In Avalonia's row-vector convention (point × matrix), left-to-right
+        // composition means the leftmost matrix is applied first.
+        var matrix = Matrix.CreateTranslation(-cx, -cy)
+                   * Matrix.CreateRotation(rad)
+                   * Matrix.CreateTranslation(cx, cy);
+
+        using (context.PushTransform(matrix))
+            draw();
+    }
+
+    // ── Pointer handling ────────────────────────────────────────────────────
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
 
-        Point localPoint = e.GetPosition(this);
-        double width = Bounds.Width;
+        Point local = e.GetPosition(this);
+        double width  = Bounds.Width;
         double height = Bounds.Height;
         Point handleCenter = new Point(width - HandleRadius, HandleRadius);
 
-        // 点击旋转手柄
-        if (Vector.Distance(localPoint, handleCenter) <= HandleRadius)
+        if (Vector.Distance(local, handleCenter) <= HandleRadius)
         {
+            // ── Rotation handle ──
             _isDraggingHandle = true;
             _startAngle = Angle;
-            Point rotateCenter = new Point(0, height / 2); // 旋转中心（左边缘中点）
-            double dx = localPoint.X - rotateCenter.X;
-            double dy = localPoint.Y - rotateCenter.Y;
-            _handleStartAngleRad = Math.Atan2(dy, dx); // 鼠标相对旋转中心的初始角度
+            Point rotCenter = new Point(0, height / 2);
+            _handleStartAngleRad = Math.Atan2(local.Y - rotCenter.Y, local.X - rotCenter.X);
             e.Pointer.Capture(this);
             e.Handled = true;
         }
-        // 点击尺子本体（拖拽）
+        else if (Math.Abs(local.X - _measureLineX) <= MeasureLineHitThreshold)
+        {
+            // ── Measure line drag ──
+            // `local` is already in the ruler's own coordinate system, so local.X
+            // directly represents position along the ruler axis — correct for any angle.
+            _isDraggingMeasureLine    = true;
+            _measureLineDragStartLocalX = local.X;
+            _measureLineStartX          = _measureLineX;
+            e.Pointer.Capture(this);
+            e.Handled = true;
+        }
         else if (Parent is Canvas canvas)
         {
-            _isDragging = true;
-            _dragStartCanvasPos = e.GetPosition(canvas); // 记录画布坐标
-            _dragStartLeft = Canvas.GetLeft(this);       // 记录初始Left
-            _dragStartTop = Canvas.GetTop(this);         // 记录初始Top
+            // ── Body drag ──
+            _isDragging          = true;
+            _dragStartCanvasPos  = e.GetPosition(canvas);
+            _dragStartLeft       = Canvas.GetLeft(this);
+            _dragStartTop        = Canvas.GetTop(this);
             e.Pointer.Capture(this);
             e.Handled = true;
         }
@@ -174,35 +261,32 @@ public class RulerControl : Control
     {
         base.OnPointerMoved(e);
 
-        // 处理旋转
         if (_isDraggingHandle)
         {
-            double height = Bounds.Height;
-            Point localPoint = e.GetPosition(this);
-            Point rotateCenter = new Point(0, height / 2);
-
-            // 计算当前鼠标相对旋转中心的角度
-            double dx = localPoint.X - rotateCenter.X;
-            double dy = localPoint.Y - rotateCenter.Y;
-            double currentAngleRad = Math.Atan2(dy, dx);
-
-            // 角度差 = 当前角度 - 初始角度，转换为角度值
-            double angleDelta = (currentAngleRad - _handleStartAngleRad) * 180 / Math.PI;
-            Angle = _startAngle + angleDelta; // 直接叠加差值，无累积错误
+            // Compute new angle from current mouse position relative to rotation centre
+            Point local     = e.GetPosition(this);
+            Point rotCenter = new Point(0, Bounds.Height / 2);
+            double currentRad  = Math.Atan2(local.Y - rotCenter.Y, local.X - rotCenter.X);
+            double angleDelta  = (currentRad - _handleStartAngleRad) * 180.0 / Math.PI;
+            Angle = _startAngle + angleDelta;
             e.Handled = true;
         }
-        // 处理拖拽
+        else if (_isDraggingMeasureLine)
+        {
+            // `GetPosition(this)` returns local ruler coordinates, so X is along the ruler axis.
+            Point local = e.GetPosition(this);
+            double deltaX = local.X - _measureLineDragStartLocalX;
+            _measureLineX = Math.Clamp(_measureLineStartX + deltaX, 0, Bounds.Width);
+            InvalidateVisual();
+            e.Handled = true;
+        }
         else if (_isDragging && Parent is Canvas canvas)
         {
-            Point currentCanvasPos = e.GetPosition(canvas);
-            // 计算画布坐标偏移量
-            double deltaX = currentCanvasPos.X - _dragStartCanvasPos.X;
-            double deltaY = currentCanvasPos.Y - _dragStartCanvasPos.Y;
-
-            // 新位置 = 初始位置 + 偏移量（边界限制）
-            double newLeft = Math.Max(0, Math.Min(_dragStartLeft + deltaX, canvas.Bounds.Width - Bounds.Width));
-            double newTop = Math.Max(0, Math.Min(_dragStartTop + deltaY, canvas.Bounds.Height - Bounds.Height));
-
+            Point current = e.GetPosition(canvas);
+            double deltaX = current.X - _dragStartCanvasPos.X;
+            double deltaY = current.Y - _dragStartCanvasPos.Y;
+            double newLeft = Math.Max(0, Math.Min(_dragStartLeft + deltaX, canvas.Bounds.Width  - Bounds.Width));
+            double newTop  = Math.Max(0, Math.Min(_dragStartTop  + deltaY, canvas.Bounds.Height - Bounds.Height));
             Canvas.SetLeft(this, newLeft);
             Canvas.SetTop(this, newTop);
             e.Handled = true;
@@ -215,6 +299,12 @@ public class RulerControl : Control
         if (_isDraggingHandle)
         {
             _isDraggingHandle = false;
+            e.Pointer.Capture(null);
+            e.Handled = true;
+        }
+        else if (_isDraggingMeasureLine)
+        {
+            _isDraggingMeasureLine = false;
             e.Pointer.Capture(null);
             e.Handled = true;
         }
