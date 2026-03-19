@@ -19,6 +19,9 @@ public class RulerControl : Control
     public static readonly StyledProperty<double> AngleProperty =
         AvaloniaProperty.Register<RulerControl, double>(nameof(Angle), 0.0);
 
+    public static readonly StyledProperty<double> MeasurePositionProperty =
+    AvaloniaProperty.Register<RulerControl, double>(nameof(MeasurePosition), 0.0);
+
     public double Dpi
     {
         get => GetValue(DpiProperty);
@@ -37,13 +40,20 @@ public class RulerControl : Control
         set => SetValue(AngleProperty, value);
     }
 
+    // 测量线位置(厘米)
+    public double MeasurePosition
+    {
+        get => GetValue(MeasurePositionProperty);
+        set => SetValue(MeasurePositionProperty, value);
+    }
+
     // Constants
     private const double RulerHeight = 50;
     private const double HandleRadius = 8;
     // The measure line extends RulerHeight/2 above and below the ruler body,
     // giving a total visible length of RulerHeight (body) + RulerHeight/2 + RulerHeight/2 = 2 * RulerHeight.
     private const double MeasureLineExtend = RulerHeight / 2;
-    private const double MeasureLineHitThreshold = 6.0;
+    private const double MeasureLineHitThreshold = 12.0;
 
     // Rotation handle state
     private bool _isDraggingHandle;
@@ -57,10 +67,12 @@ public class RulerControl : Control
     private double _dragStartTop;
 
     // Measure line state
-    private double _measureLineX;           // current X position in local ruler coordinates
+    // private double _measureLineX;           // current X position in local ruler coordinates
     private bool _isDraggingMeasureLine;
     private double _measureLineDragStartLocalX;
     private double _measureLineStartX;
+
+    private double _mm2Pixcel;
 
     static RulerControl()
     {
@@ -73,6 +85,11 @@ public class RulerControl : Control
         LengthInCmProperty.Changed.AddClassHandler<RulerControl>((c, _) =>
         {
             c.InvalidateMeasure();
+            c.InvalidateVisual();
+        });
+
+        MeasurePositionProperty.Changed.AddClassHandler<RulerControl>((c, _) =>
+        {
             c.InvalidateVisual();
         });
     }
@@ -98,6 +115,7 @@ public class RulerControl : Control
     protected override Size MeasureOverride(Size availableSize)
     {
         double pixelLength = (LengthInCm / 2.54) * Dpi; // cm → inch → pixels
+        _mm2Pixcel = pixelLength / (LengthInCm * 10);
         return new Size(pixelLength, RulerHeight);
     }
 
@@ -106,16 +124,18 @@ public class RulerControl : Control
         double width = Bounds.Width;
         double height = Bounds.Height;
 
-        // Background and border
-        context.FillRectangle(Brushes.LightGray, new Rect(0, 0, width, height));
-        context.DrawRectangle(new Pen(Brushes.Black, 1), new Rect(0, 0, width, height));
-
         // Tick marks and cm labels
-        double mmToPixels = width / (LengthInCm * 10);
+        // double mmToPixels = width / (LengthInCm * 10);
+
+        // Background and border
+        // context.FillRectangle(Brushes.LightGray, new Rect(0, 0, width, height));
+        // context.DrawRectangle(new Pen(Brushes.Black, 1), new Rect(0, 0, width, height));
+        DrawMeasuredArea(context, width, height);
+
         int totalMM = (int)(LengthInCm * 10);
         for (int mm = 0; mm <= totalMM; mm++)
         {
-            double x = mm * mmToPixels;
+            double x = mm * _mm2Pixcel;
             double tickH;
             if (mm % 10 == 0)
             {
@@ -138,6 +158,13 @@ public class RulerControl : Control
         context.DrawEllipse(Brushes.Red, null, handleCenter, HandleRadius, HandleRadius);
     }
 
+    private void DrawMeasuredArea(DrawingContext context, double width, double height)
+    {
+        var measureLineX = MeasurePosition * 10 * _mm2Pixcel;
+        double lineX = Math.Clamp(measureLineX, 0, width);
+        context.FillRectangle(new SolidColorBrush(Color.Parse("#1A22C55E")), new Rect(0, 0, lineX, height));
+    }
+
     /// <summary>
     /// Draws the green dashed measure line and its upright cm label.
     /// The line is perpendicular to the ruler (vertical in local space) with a total height
@@ -147,8 +174,9 @@ public class RulerControl : Control
     {
         if (width <= 0) return;
 
-        double lineX = Math.Clamp(_measureLineX, 0, width);
-        double lineTop    = -MeasureLineExtend;          // above the ruler
+        var measureLineX = MeasurePosition * 10 * _mm2Pixcel;
+        double lineX = Math.Clamp(measureLineX, 0, width);
+        double lineTop = -MeasureLineExtend;          // above the ruler
         double lineBottom = height + MeasureLineExtend;  // below the ruler
         // total = height + 2 * MeasureLineExtend = RulerHeight + RulerHeight = 2 * RulerHeight ✓
 
@@ -158,7 +186,7 @@ public class RulerControl : Control
 
         // Cm label — positioned just above the top of the measure line
         double cmValue = lineX / width * LengthInCm;
-        string label    = $"{cmValue:F1} cm";
+        string label = $"{cmValue:F1} cm";
         var ft = new FormattedText(label, CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, Typeface.Default, 11, Brushes.Green);
 
@@ -176,6 +204,10 @@ public class RulerControl : Control
     /// </summary>
     private void DrawCMNumber(DrawingContext context, double x, double tickHeight, double cmValue)
     {
+        if (cmValue == 0.0)
+        {
+            return;
+        }
         var ft = new FormattedText(
             cmValue.ToString(CultureInfo.InvariantCulture),
             CultureInfo.InvariantCulture,
@@ -220,9 +252,11 @@ public class RulerControl : Control
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
 
         Point local = e.GetPosition(this);
-        double width  = Bounds.Width;
+        double width = Bounds.Width;
         double height = Bounds.Height;
         Point handleCenter = new Point(width - HandleRadius, HandleRadius);
+
+        var measureLineX = MeasurePosition * 10 * _mm2Pixcel;
 
         if (Vector.Distance(local, handleCenter) <= HandleRadius)
         {
@@ -234,24 +268,24 @@ public class RulerControl : Control
             e.Pointer.Capture(this);
             e.Handled = true;
         }
-        else if (Math.Abs(local.X - _measureLineX) <= MeasureLineHitThreshold)
+        else if (Math.Abs(local.X - measureLineX) <= MeasureLineHitThreshold)
         {
             // ── Measure line drag ──
             // `local` is already in the ruler's own coordinate system, so local.X
             // directly represents position along the ruler axis — correct for any angle.
-            _isDraggingMeasureLine    = true;
+            _isDraggingMeasureLine = true;
             _measureLineDragStartLocalX = local.X;
-            _measureLineStartX          = _measureLineX;
+            _measureLineStartX = measureLineX;
             e.Pointer.Capture(this);
             e.Handled = true;
         }
         else if (Parent is Canvas canvas)
         {
             // ── Body drag ──
-            _isDragging          = true;
-            _dragStartCanvasPos  = e.GetPosition(canvas);
-            _dragStartLeft       = Canvas.GetLeft(this);
-            _dragStartTop        = Canvas.GetTop(this);
+            _isDragging = true;
+            _dragStartCanvasPos = e.GetPosition(canvas);
+            _dragStartLeft = Canvas.GetLeft(this);
+            _dragStartTop = Canvas.GetTop(this);
             e.Pointer.Capture(this);
             e.Handled = true;
         }
@@ -264,10 +298,10 @@ public class RulerControl : Control
         if (_isDraggingHandle)
         {
             // Compute new angle from current mouse position relative to rotation centre
-            Point local     = e.GetPosition(this);
+            Point local = e.GetPosition(this);
             Point rotCenter = new Point(0, Bounds.Height / 2);
-            double currentRad  = Math.Atan2(local.Y - rotCenter.Y, local.X - rotCenter.X);
-            double angleDelta  = (currentRad - _handleStartAngleRad) * 180.0 / Math.PI;
+            double currentRad = Math.Atan2(local.Y - rotCenter.Y, local.X - rotCenter.X);
+            double angleDelta = (currentRad - _handleStartAngleRad) * 180.0 / Math.PI;
             Angle = _startAngle + angleDelta;
             e.Handled = true;
         }
@@ -276,7 +310,8 @@ public class RulerControl : Control
             // `GetPosition(this)` returns local ruler coordinates, so X is along the ruler axis.
             Point local = e.GetPosition(this);
             double deltaX = local.X - _measureLineDragStartLocalX;
-            _measureLineX = Math.Clamp(_measureLineStartX + deltaX, 0, Bounds.Width);
+            var measureLineX = Math.Clamp(_measureLineStartX + deltaX, 0, Bounds.Width);
+            MeasurePosition = measureLineX / 10 / _mm2Pixcel;
             InvalidateVisual();
             e.Handled = true;
         }
@@ -285,8 +320,8 @@ public class RulerControl : Control
             Point current = e.GetPosition(canvas);
             double deltaX = current.X - _dragStartCanvasPos.X;
             double deltaY = current.Y - _dragStartCanvasPos.Y;
-            double newLeft = Math.Max(0, Math.Min(_dragStartLeft + deltaX, canvas.Bounds.Width  - Bounds.Width));
-            double newTop  = Math.Max(0, Math.Min(_dragStartTop  + deltaY, canvas.Bounds.Height - Bounds.Height));
+            double newLeft = Math.Max(0, Math.Min(_dragStartLeft + deltaX, canvas.Bounds.Width - Bounds.Width));
+            double newTop = Math.Max(0, Math.Min(_dragStartTop + deltaY, canvas.Bounds.Height - Bounds.Height));
             Canvas.SetLeft(this, newLeft);
             Canvas.SetTop(this, newTop);
             e.Handled = true;

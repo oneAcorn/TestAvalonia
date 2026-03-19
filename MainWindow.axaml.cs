@@ -18,7 +18,8 @@ public partial class MainWindow : Window
         {
             Dpi = 91.79,
             LengthInCm = 10,
-            Angle = 90
+            Angle = 90,
+            MeasurePosition = 4.8
         };
 
         // 初始位置（画布中央）
