@@ -19,7 +19,8 @@ public partial class MainWindow : Window
             Dpi = 91.79,
             LengthInCm = 10.8,
             Angle = 90,
-            MeasurePosition = 4.8
+            MeasurePosition = 4.8,
+            DragAngleEnable=true
         };
 
         // 初始位置

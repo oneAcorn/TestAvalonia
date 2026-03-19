@@ -20,7 +20,10 @@ public class RulerControl : Control
         AvaloniaProperty.Register<RulerControl, double>(nameof(Angle), 0.0);
 
     public static readonly StyledProperty<double> MeasurePositionProperty =
-    AvaloniaProperty.Register<RulerControl, double>(nameof(MeasurePosition), 0.0);
+        AvaloniaProperty.Register<RulerControl, double>(nameof(MeasurePosition), 0.0);
+
+    public static readonly StyledProperty<bool> DragAngleEnableProperty =
+        AvaloniaProperty.Register<RulerControl, bool>(nameof(DragAngleEnable), true);
 
     public double Dpi
     {
@@ -45,6 +48,12 @@ public class RulerControl : Control
     {
         get => GetValue(MeasurePositionProperty);
         set => SetValue(MeasurePositionProperty, value);
+    }
+
+    public bool DragAngleEnable
+    {
+        get => GetValue(DragAngleEnableProperty);
+        set => SetValue(DragAngleEnableProperty, value);
     }
 
     public double ArrowHeadLength { get; set; } = 10;
@@ -75,6 +84,7 @@ public class RulerControl : Control
     private double _measureLineDragStartLocalX;
     private double _measureLineStartX;
     private double _measureTextPadding = 5;
+    private Typeface boldTf = new Typeface(FontFamily.Default, weight: FontWeight.Bold);
 
     private double _mm2Pixcel;
 
@@ -161,8 +171,11 @@ public class RulerControl : Control
         DrawMeasureLine(context, width, height);
 
         // Rotation handle (red circle, top-right corner)
-        Point handleCenter = new Point(width - HandleRadius, HandleRadius + height / 2.0);
-        context.DrawEllipse(Brushes.Red, null, handleCenter, HandleRadius, HandleRadius);
+        if (DragAngleEnable)
+        {
+            Point handleCenter = new Point(width - HandleRadius, HandleRadius + height / 2.0);
+            context.DrawEllipse(Brushes.Red, null, handleCenter, HandleRadius, HandleRadius);
+        }
     }
 
     private void DrawMeasuredArea(DrawingContext context, double width, double height)
@@ -235,7 +248,7 @@ public class RulerControl : Control
         var arrowThickness = 2;
         string label = $"{MeasurePosition:F1} cm";
         var ft = new FormattedText(label, CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight, Typeface.Default, 11, Brushes.Green);
+            FlowDirection.LeftToRight, boldTf, 11, arrowBrush);
 
         double labelX = lineX / 2.0 - ft.Width / 2.0;   // horizontally centred on the line
         double labelY = height - ft.Height / 2.0; // a few pixels above the line top
@@ -355,7 +368,7 @@ public class RulerControl : Control
 
         var measureLineX = MeasurePosition * 10 * _mm2Pixcel;
 
-        if (Vector.Distance(local, handleCenter) <= HandleRadius)
+        if (DragAngleEnable && Vector.Distance(local, handleCenter) <= HandleRadius)
         {
             // ── Rotation handle ──
             _isDraggingHandle = true;
