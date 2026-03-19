@@ -3,9 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using System;
-using System.Diagnostics;
-using Avalonia.VisualTree;
-using Avalonia.Media.TextFormatting;
+using System.Globalization;
 
 namespace TestAvalonia;
 
@@ -109,7 +107,20 @@ public class RulerControl : Control
         for (int mm = 0; mm <= totalMM; mm++)
         {
             double x = mm * mmToPixels;
-            double tickHeight = mm % 10 == 0 ? height * 0.6 : (mm % 5 == 0 ? height * 0.4 : height * 0.2);
+            double tickHeight;
+            if (mm % 10 == 0)
+            {
+                tickHeight = height * 0.6;
+                DrawCMNumber(context, x, tickHeight, mm / 10.0);
+            }
+            else if (mm % 5 == 0)
+            {
+                tickHeight = height * 0.4;
+            }
+            else
+            {
+                tickHeight = height * 0.2;
+            }
             context.DrawLine(new Pen(Brushes.Black, 1), new Point(x, 0), new Point(x, tickHeight));
         }
 
@@ -118,39 +129,12 @@ public class RulerControl : Control
         context.DrawEllipse(Brushes.Red, null, handleCenter, HandleRadius, HandleRadius);
     }
 
-    // // 绘制垂直于屏幕的厘米数字（核心逻辑：抵消尺子旋转，让文本保持水平）
-    // private void DrawCentimeterNumber(DrawingContext context, double x, double tickHeight, double cmValue)
-    // {
-    //     // 1. 转换刻度本地坐标为屏幕全局坐标（抵消尺子旋转的关键）
-    //     var localPoint = new Point(x, tickHeight + 2); // 数字在大刻度下方2像素
-    //     var globalPoint = PointToScreen(localPoint);   // 转屏幕坐标
-    //     var renderPoint = ScreenToClient(globalPoint); // 转回控件绘制坐标（已抵消旋转）
-
-    //     // 2. 生成数字文本（仅显示非0的厘米数，0刻度可省略）
-    //     string text = cmValue == 0 ? "" : $"{cmValue:F0}cm";
-
-    //     // 3. 绘制文本（保持垂直于屏幕，无旋转）
-    //     var textLayout = new TextLayout(text:text, _textTypeface,TextFontSize,Brushes.Black);
-    //     context.DrawText(
-    //         brush: Brushes.Black,
-    //         origin: new Point(renderPoint.X - textLayout.Width / 2, renderPoint.Y), // 文本居中
-    //         textLayout: textLayout
-    //     );
-    // }
-
-    // // 【最终修正：适配所有Avalonia版本的HitTestCore】
-    // // 1. 正确签名：返回Visual，参数是PointHitTestParameters（来自Avalonia.Input）
-    // // 2. Control继承自Visual，所以能重写这个方法
-    // protected override Visual? HitTestCore(PointHitTestParameters hitTestParameters)
-    // {
-    //     // 强制整个Bounds区域可点击（即使无背景）
-    //     if (Bounds.Contains(hitTestParameters.HitPoint))
-    //     {
-    //         return this;
-    //     }
-    //     // 调用Visual基类的HitTestCore（Control的父类）
-    //     return base.HitTestCore(hitTestParameters);
-    // }
+    private void DrawCMNumber(DrawingContext context, double x, double tickHeight, double cmValue)
+    {
+        var formattedText = new FormattedText(cmValue.ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 20, new SolidColorBrush(Colors.Black));
+        var xPos = x - formattedText.Width / 2;
+        context.DrawText(formattedText, new Point(xPos, tickHeight));
+    }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
