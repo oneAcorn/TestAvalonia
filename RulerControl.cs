@@ -224,6 +224,8 @@ public class RulerControl : Control
     {
         var measureLineX = MeasurePosition * 10 * _mm2Pixcel;
         double lineX = Math.Clamp(measureLineX, 0, width);
+        //绘制透明区域,增大拖拽移动有效范围
+        context.FillRectangle(new SolidColorBrush(Colors.Transparent), new Rect(0,0,width,height));
         context.FillRectangle(_measureAreaBrush, new Rect(0, 0, lineX, height));
     }
 
