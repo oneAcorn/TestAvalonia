@@ -497,8 +497,24 @@ public class RulerControl : Control
             Point current = e.GetPosition(canvas);
             double deltaX = current.X - _dragStartCanvasPos.X;
             double deltaY = current.Y - _dragStartCanvasPos.Y;
-            double newLeft = Math.Max(0, Math.Min(_dragStartLeft + deltaX, canvas.Bounds.Width - Bounds.Width));
-            double newTop = Math.Max(0, Math.Min(_dragStartTop + deltaY, canvas.Bounds.Height - Bounds.Height));
+
+            double newLeft = _dragStartLeft + deltaX;
+            double newTop = _dragStartTop + deltaY;
+
+            // 计算期望位置的外接矩形
+            Rect bbox = GetBoundingBox(newLeft, newTop);
+
+            // 根据 Canvas 边界修正位置
+            if (bbox.Left < 0)
+                newLeft += -bbox.Left;
+            else if (bbox.Right > canvas.Bounds.Width)
+                newLeft -= (bbox.Right - canvas.Bounds.Width);
+
+            if (bbox.Top < 0)
+                newTop += -bbox.Top;
+            else if (bbox.Bottom > canvas.Bounds.Height)
+                newTop -= (bbox.Bottom - canvas.Bounds.Height);
+
             Canvas.SetLeft(this, newLeft);
             Canvas.SetTop(this, newTop);
             e.Handled = true;
@@ -526,5 +542,47 @@ public class RulerControl : Control
             e.Pointer.Capture(null);
             e.Handled = true;
         }
+    }
+
+    // 计算控件旋转后的外接矩形（相对于 Canvas 坐标系）
+    private Rect GetBoundingBox(double left, double top)
+    {
+        double width = Bounds.Width;
+        double height = Bounds.Height;
+        double angleRad = Angle * Math.PI / 180.0;
+        double cos = Math.Cos(angleRad);
+        double sin = Math.Sin(angleRad);
+
+        // 旋转中心在 Canvas 中的坐标 (RenderTransformOrigin = (0, 0.5))
+        double centerX = left;
+        double centerY = top + height / 2.0;
+
+        // 四个角点相对于旋转中心的偏移量
+        (double dx, double dy)[] offsets = new[]
+        {
+        (0, -height / 2),
+        (width, -height / 2),
+        (width, height / 2),
+        (0, height / 2)
+    };
+
+        double minX = double.MaxValue, maxX = double.MinValue;
+        double minY = double.MaxValue, maxY = double.MinValue;
+
+        foreach (var (dx, dy) in offsets)
+        {
+            // 旋转偏移
+            double rx = dx * cos - dy * sin;
+            double ry = dx * sin + dy * cos;
+            double x = centerX + rx;
+            double y = centerY + ry;
+
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+
+        return new Rect(minX, minY, maxX - minX, maxY - minY);
     }
 }
