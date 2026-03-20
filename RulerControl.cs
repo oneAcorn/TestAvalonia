@@ -25,6 +25,15 @@ public class RulerControl : Control
     public static readonly StyledProperty<bool> DragAngleEnableProperty =
         AvaloniaProperty.Register<RulerControl, bool>(nameof(DragAngleEnable), true);
 
+    public static readonly StyledProperty<bool> SubMeasureLineEnableProperty =
+        AvaloniaProperty.Register<RulerControl, bool>(nameof(SubMeasureLineEnable), false);
+
+    // public static readonly StyledProperty<bool> SubMeasureLineFixedProperty =
+    //     AvaloniaProperty.Register<RulerControl, bool>(nameof(SubMeasureLineFixed), false);
+
+    public static readonly StyledProperty<double> SubMeasurePositionProperty =
+        AvaloniaProperty.Register<RulerControl, double>(nameof(SubMeasurePosition), 2.0);
+
     public double Dpi
     {
         get => GetValue(DpiProperty);
@@ -43,17 +52,47 @@ public class RulerControl : Control
         set => SetValue(AngleProperty, value);
     }
 
-    // 测量线位置(厘米)
+    /// <summary>
+    /// 测量线位置(厘米)
+    /// </summary>
     public double MeasurePosition
     {
         get => GetValue(MeasurePositionProperty);
         set => SetValue(MeasurePositionProperty, value);
     }
 
+    /// <summary>
+    /// 是否允许拖拽角度
+    /// </summary>
     public bool DragAngleEnable
     {
         get => GetValue(DragAngleEnableProperty);
         set => SetValue(DragAngleEnableProperty, value);
+    }
+
+    /// <summary>
+    /// 是否显示子测量线
+    /// </summary>
+    public bool SubMeasureLineEnable
+    {
+        get => GetValue(SubMeasureLineEnableProperty);
+        set => SetValue(SubMeasureLineEnableProperty, value);
+    }
+
+    // /// <summary>
+    // /// 子测量线是否固定,跟随测量线.
+    // /// </summary>
+    // public bool SubMeasureLineFixed
+    // {
+    //     get => GetValue(SubMeasureLineFixedProperty);
+    //     set => SetValue(SubMeasureLineFixedProperty, value);
+    // }
+
+    public double SubMeasurePosition
+    {
+        //TODO 设置合法范围
+        get => GetValue(SubMeasurePositionProperty);
+        set => SetValue(SubMeasurePositionProperty, value);
     }
 
     public double ArrowHeadLength { get; set; } = 10;
@@ -65,7 +104,7 @@ public class RulerControl : Control
     // The measure line extends RulerHeight/2 above and below the ruler body,
     // giving a total visible length of RulerHeight (body) + RulerHeight/2 + RulerHeight/2 = 2 * RulerHeight.
     private const double MeasureLineExtend = RulerHeight / 2;
-    private const double MeasureLineHitThreshold = 12.0;
+    private const double MeasureLineHitThreshold = 18.0;
 
     // Rotation handle state
     private bool _isDraggingHandle;
@@ -89,6 +128,9 @@ public class RulerControl : Control
     private double _mm2Pixcel;
 
     private SolidColorBrush _scaleBrush = new SolidColorBrush(Color.Parse("#FFBEBFCA"));
+    private SolidColorBrush _measureAreaBrush = new SolidColorBrush(Color.Parse("#1A22C55E"));
+    private SolidColorBrush _arrowBrush = new SolidColorBrush(Color.Parse("#FF1FB255"));
+    private SolidColorBrush _totalMeasureValueBrush = new SolidColorBrush(Color.Parse("#FF22C55E"));
 
     static RulerControl()
     {
@@ -182,7 +224,7 @@ public class RulerControl : Control
     {
         var measureLineX = MeasurePosition * 10 * _mm2Pixcel;
         double lineX = Math.Clamp(measureLineX, 0, width);
-        context.FillRectangle(new SolidColorBrush(Color.Parse("#1A22C55E")), new Rect(0, 0, lineX, height));
+        context.FillRectangle(_measureAreaBrush, new Rect(0, 0, lineX, height));
     }
 
     private void DrawArrow(DrawingContext context, Point start, Point end, IBrush fill, Pen pen)
@@ -244,30 +286,55 @@ public class RulerControl : Control
         context.DrawLine(dashedPen, new Point(lineX, lineTop), new Point(lineX, lineBottom));
 
         // Cm label — positioned just above the top of the measure line
-        var arrowBrush = new SolidColorBrush(Color.Parse("#22C55E"));
-        var arrowThickness = 2;
-        string label = $"{MeasurePosition:F1} cm";
-        var ft = new FormattedText(label, CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight, boldTf, 11, arrowBrush);
+        var isSubMeasureEnable = SubMeasureLineEnable && SubMeasurePosition > 0.0 && (MeasurePosition - SubMeasurePosition) > 0.0;
 
-        double labelX = lineX / 2.0 - ft.Width / 2.0;   // horizontally centred on the line
+        var mainLineX = lineX;
+        var mainPosition = MeasurePosition;
+        if (isSubMeasureEnable)
+        {
+            mainPosition = MeasurePosition - SubMeasurePosition;
+            var mainMeasureLineX = mainPosition * 10 * _mm2Pixcel;
+            mainLineX = Math.Clamp(mainMeasureLineX, 0, width);
+
+            //绘制sub line 
+            context.DrawLine(dashedPen, new Point(mainLineX, lineTop), new Point(mainLineX, height + 3));
+            var subFt = new FormattedText($"{SubMeasurePosition:F1} cm", CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight, boldTf, 10, _arrowBrush);
+            var subTextX = mainLineX + ((lineX - mainLineX) / 2.0) - subFt.Width / 2.0;
+            var subTextY = height - subFt.Height / 2.0;
+            DrawByHV(context, mainLineX + ((lineX - mainLineX) / 2.0), height,
+                () => context.DrawText(subFt, new Point(subTextX, subTextY)));
+
+            //绘制总数
+            var totalFt = new FormattedText($"{MeasurePosition:F1} cm", CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight, boldTf, 24, _arrowBrush);
+            var totalTextX = lineX / 2 - totalFt.Width / 2.0;
+            var totalTextY = lineBottom - totalFt.Height;
+            context.DrawText(totalFt, new Point(totalTextX, totalTextY));
+        }
+        var arrowThickness = 2;
+        string label = $"{mainPosition:F1} cm";
+        var ft = new FormattedText(label, CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, boldTf, 11, _arrowBrush);
+
+        double labelX = mainLineX / 2.0 - ft.Width / 2.0;   // horizontally centred on the line
         double labelY = height - ft.Height / 2.0; // a few pixels above the line top
 
         // Keep the label upright regardless of the ruler's rotation angle.
         // Rotate around the label's visual centre.
-        DrawByHV(context, lineX / 2.0, labelY + ft.Height / 2,
+        DrawByHV(context, mainLineX / 2.0, labelY + ft.Height / 2,
             () => context.DrawText(ft, new Point(labelX, labelY)));
         // context.DrawText(ft, new Point(labelX, labelY));
 
         DrawArrow(context,
             new Point(labelX - _measureTextPadding, height),
-            new Point(0.0, height), arrowBrush,
-            new Pen(arrowBrush, arrowThickness)
+            new Point(0.0, height), _arrowBrush,
+            new Pen(_arrowBrush, arrowThickness)
             );
         DrawArrow(context,
             new Point(labelX + ft.Width + _measureTextPadding, height),
-            new Point(lineX, height), arrowBrush,
-            new Pen(arrowBrush, arrowThickness)
+            new Point(mainLineX, height), _arrowBrush,
+            new Pen(_arrowBrush, arrowThickness)
             );
     }
 

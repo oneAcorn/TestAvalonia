@@ -18,9 +18,32 @@ public partial class MainWindow : Window
         {
             Dpi = 91.79,
             LengthInCm = 10.8,
+            Angle = 0,
+            MeasurePosition = 4.8,
+            DragAngleEnable = true,
+            SubMeasureLineEnable = false
+        };
+
+        // 初始位置
+        double left = (DrawingCanvas.Bounds.Width - ruler.Bounds.Width) * 0.3;
+        double top = (DrawingCanvas.Bounds.Height - ruler.Bounds.Height) * 0.1;
+        Canvas.SetLeft(ruler, left);
+        Canvas.SetTop(ruler, top);
+
+        DrawingCanvas.Children.Add(ruler);
+    }
+
+    private void AddRuler_Click2(object sender, RoutedEventArgs e)
+    {
+        var ruler = new RulerControl
+        {
+            Dpi = 91.79,
+            LengthInCm = 10.8,
             Angle = 90,
             MeasurePosition = 4.8,
-            DragAngleEnable=true
+            DragAngleEnable = false,
+            SubMeasureLineEnable = true,
+            SubMeasurePosition = 2.0
         };
 
         // 初始位置
@@ -29,7 +52,28 @@ public partial class MainWindow : Window
         Canvas.SetLeft(ruler, left);
         Canvas.SetTop(ruler, top);
 
-        // 无需绑定拖拽事件（逻辑已移到RulerControl内部）
+        DrawingCanvas.Children.Add(ruler);
+    }
+
+    private void AddRuler_Click3(object sender, RoutedEventArgs e)
+    {
+        var ruler = new RulerControl
+        {
+            Dpi = 91.79,
+            LengthInCm = 10.8,
+            Angle = 90,
+            MeasurePosition = 4.8,
+            DragAngleEnable = true,
+            SubMeasureLineEnable = true,
+            SubMeasurePosition = 2.0
+        };
+
+        // 初始位置
+        double left = (DrawingCanvas.Bounds.Width - ruler.Bounds.Width) * 0.75;
+        double top = (DrawingCanvas.Bounds.Height - ruler.Bounds.Height) * 0.1;
+        Canvas.SetLeft(ruler, left);
+        Canvas.SetTop(ruler, top);
+
         DrawingCanvas.Children.Add(ruler);
     }
 }
